@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XaviWallet — Secure AI Agent Wallets</title>
+    <link rel="icon" type="image/png" href="xavi-logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0D0A1A;
+            --bg-surface: #15112A;
+            --bg-card: #1E1836;
+            --bg-elevated: #2A2344;
+            --primary: #8B5CF6;
+            --primary-light: #A855F7;
+            --primary-dark: #6D28D9;
+            --primary-glow: rgba(139, 92, 246, 0.3);
+            --accent: #C084FC;
+            --text-primary: #F8FAFC;
+            --text-secondary: #E2E8F0;
+            --text-muted: #94A3B8;
+            --border: #2D2550;
+            --border-light: #3D3560;
+            --success: #22C55E;
+            --warning: #F59E0B;
+            --error: #EF4444;
+            --gradient: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(139, 92, 246, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(139, 92, 246, 0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+        
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 16px 24px;
+            background: rgba(13, 10, 26, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+        
+        .nav-inner {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+        
+        .logo img { height: 40px; border-radius: 8px; }
+        .logo-text { font-weight: 800; font-size: 20px; }
+        .logo-text span { color: var(--primary); }
+        
+        .nav-tabs {
+            display: flex;
+            gap: 8px;
+            background: var(--bg-surface);
+            padding: 4px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+        
+        .nav-tab {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            border-radius: 8px;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .nav-tab:hover { color: var(--text-primary); }
+        .nav-tab.active { background: var(--primary); color: white; }
+        
+        .connect-btn {
+            padding: 12px 24px;
+            background: var(--gradient);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .connect-btn.connected {
+            background: var(--bg-surface);
+            border: 1px solid var(--success);
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 100px 24px 60px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .hero {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-top: 20px;
+        }
+        
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--primary);
+            border-radius: 24px;
+            padding: 8px 16px;
+            font-size: 13px;
+            color: var(--primary);
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            font-size: 44px;
+            font-weight: 800;
+            margin-bottom: 14px;
+        }
+        
+        h1 .gradient {
+            background: var(--gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .subtitle {
+            font-size: 18px;
+            color: var(--text-muted);
+            max-width: 700px;
+            margin: 0 auto 32px;
+        }
+        
+        /* Stats Bar */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        
+        .stat-item {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--primary);
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .card-title {
+            font-size: 18px;
+            font-weight: 700;
+        }
+        
+        /* Wallet Cards */
+        .wallets-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 20px;
+        }
+        
+        .wallet-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        
+        .wallet-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+        
+        .wallet-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+        
+        .wallet-name {
+            font-size: 18px;
+            font-weight: 700;
+        }
+        
+        .wallet-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .wallet-badge.active {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+        
+        .wallet-badge.frozen {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+        
+        .wallet-address {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+        
+        .wallet-balance {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 16px;
+        }
+        
+        .wallet-balance span {
+            font-size: 14px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        
+        /* Progress Bars */
+        .limit-item {
+            margin-bottom: 12px;
+        }
+        
+        .limit-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+        
+        .limit-label { color: var(--text-muted); }
+        .limit-value { color: var(--text-secondary); font-weight: 600; }
+        
+        .progress-bar {
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: var(--gradient);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        
+        .progress-fill.warning { background: var(--warning); }
+        .progress-fill.danger { background: var(--error); }
+        
+        /* Sessions */
+        .sessions-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .session-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .session-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .session-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--bg-elevated);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .session-name { font-weight: 600; }
+        .session-agent {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .session-expiry {
+            text-align: right;
+        }
+        
+        .session-countdown {
+            font-weight: 700;
+            color: var(--success);
+        }
+        
+        .session-countdown.warning { color: var(--warning); }
+        .session-countdown.expired { color: var(--error); }
+        
+        /* Action Log */
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .log-table th {
+            text-align: left;
+            padding: 12px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .log-table td {
+            padding: 12px;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .log-table tr:hover td {
+            background: var(--bg-card);
+        }
+        
+        .log-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .log-status.success {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+        }
+        
+        .log-status.failed {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: var(--gradient);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        
+        /* Forms */
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 14px 16px;
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        
+        .form-input:focus {
+            border-color: var(--primary);
+        }
+        
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 1000;
+            opacity: 0;
+            transition: all 0.3s;
+        }
+        
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .toast.success { border-color: var(--success); }
+        .toast.error { border-color: var(--error); }
+        
+        .page { display: none; }
+        .page.active { display: block; }
+        
+        .freeze-btn {
+            padding: 8px 16px;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            color: var(--error);
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .freeze-btn:hover {
+            background: var(--error);
+            color: white;
+        }
+        
+        @media (max-width: 900px) {
+            h1 { font-size: 32px; }
+            .stats-bar { grid-template-columns: repeat(2, 1fr); }
+            .wallets-grid { grid-template-columns: 1fr; }
+            .nav-tabs { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    
+    <nav>
+        <div class="nav-inner">
+            <a href="https://xavi-site.vercel.app" class="logo">
+                <img src="xavi-logo.png" alt="XAVI">
+                <span class="logo-text">Xavi<span>Wallet</span></span>
+            </a>
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="showPage('dashboard')">Dashboard</button>
+                <button class="nav-tab" onclick="showPage('create')">Create Wallet</button>
+                <button class="nav-tab" onclick="showPage('registry')">Registry</button>
+                <button class="nav-tab" onclick="showPage('guide')">Setup Guide</button>
+            </div>
+            <button class="connect-btn" id="connectBtn" onclick="connectWallet()">Connect Wallet</button>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="hero">
+            <div class="hero-badge">🔐 AI Agent Security Infrastructure</div>
+            <h1>Xavi<span class="gradient">Wallet</span></h1>
+            <p class="subtitle">Secure smart contract wallets for AI agents. Spending limits, contract whitelists, session keys, and instant freeze — all enforced on-chain.</p>
+        </div>
+        
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value" id="totalWallets">0</div>
+                <div class="stat-label">Wallets Created</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalVolume">0</div>
+                <div class="stat-label">Total Volume (XRP)</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalTxs">0</div>
+                <div class="stat-label">Transactions</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="verifiedWallets">0</div>
+                <div class="stat-label">Verified Wallets</div>
+            </div>
+        </div>
+        
+        <!-- Dashboard Page -->
+        <div class="page active" id="dashboardPage">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🔒 Your Agent Wallets</h2>
+                    <button class="btn btn-primary" onclick="showPage('create')">+ Create Wallet</button>
+                </div>
+                <div class="wallets-grid" id="walletsGrid">
+                    <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                        Connect wallet to see your agent wallets
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Create Wallet Page -->
+        <div class="page" id="createPage">
+            <div class="card" style="max-width: 600px; margin: 0 auto;">
+                <h2 class="card-title" style="margin-bottom: 24px;">🚀 Create Agent Wallet</h2>
+                
+                <div class="form-group">
+                    <label class="form-label">Agent Name</label>
+                    <input type="text" class="form-input" id="agentName" placeholder="e.g., Xavi, Sentinel, TradingBot">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Per-Transaction Limit (XRP)</label>
+                    <input type="number" class="form-input" id="perTxLimit" placeholder="10" value="10">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Daily Spending Limit (XRP)</label>
+                    <input type="number" class="form-input" id="dailyLimit" placeholder="50" value="50">
+                </div>
+                
+                <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 20px;">
+                    You will be the Guardian of this wallet. You can freeze it, recover funds, and manage sessions at any time.
+                </p>
+                
+                <button class="btn btn-primary" style="width: 100%;" onclick="createWallet()">
+                    Create Wallet
+                </button>
+            </div>
+        </div>
+        
+        <!-- Registry Page -->
+        <div class="page" id="registryPage">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🌐 Public Registry</h2>
+                </div>
+                <p style="color: var(--text-muted); margin-bottom: 20px;">
+                    All registered XaviWallets across the ecosystem. Filter by platform to find agents.
+                </p>
+                <div id="registryList">
+                    <p style="text-align: center; color: var(--text-muted); padding: 40px;">Loading registry...</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Guide Page -->
+        <div class="page" id="guidePage">
+            <div class="card" style="max-width: 800px; margin: 0 auto;">
+                <h2 class="card-title" style="margin-bottom: 24px;">📖 Integration Guide</h2>
+                
+                <h3 style="margin-bottom: 12px; color: var(--primary);">For OpenClaw</h3>
+                <pre style="background: var(--bg-card); padding: 16px; border-radius: 10px; overflow-x: auto; font-size: 13px; margin-bottom: 24px;">
+# 1. Guardian creates wallet via the factory
+# 2. Guardian creates a session for the agent (e.g., 7 days)
+# 3. Agent's .env file:
+XAVI_SESSION_KEY=0x...session_key
+XAVI_WALLET_ADDRESS=0xf3B549EdFD7822AD0937880A5E9A3058A9972D7E
+
+# 4. Agent executes through wallet:
+# wallet.execute(target, value, calldata)</pre>
+                
+                <h3 style="margin-bottom: 12px; color: var(--primary);">For AutoGPT / CrewAI</h3>
+                <pre style="background: var(--bg-card); padding: 16px; border-radius: 10px; overflow-x: auto; font-size: 13px; margin-bottom: 24px;">
+from web3 import Web3
+
+# Instead of raw private key, use session key through wallet
+wallet = Web3.eth.contract(address=WALLET_ADDRESS, abi=WALLET_ABI)
+
+# Agent calls execute() - wallet enforces all limits
+wallet.functions.execute(
+    target_contract,
+    value_in_wei,
+    calldata
+).transact({'from': session_key_address})</pre>
+                
+                <h3 style="margin-bottom: 12px; color: var(--primary);">Key Benefits</h3>
+                <ul style="color: var(--text-secondary); line-height: 2;">
+                    <li>✅ Agent can't exceed spending limits</li>
+                    <li>✅ Agent can only call whitelisted contracts</li>
+                    <li>✅ Session keys auto-expire</li>
+                    <li>✅ Guardian can freeze instantly</li>
+                    <li>✅ Every action logged on-chain</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast" id="toast">
+        <span id="toastIcon">✓</span>
+        <span id="toastMsg">Success!</span>
+    </div>
+
+    <script>
+        const FACTORY_ADDRESS = '0x63048d819c86f7bAF619E8918534275c5dC36f59';
+        const REGISTRY_ADDRESS = '0x90B085B20BAF8ef42930F6Efa5Cb1608Acf88a90';
+        const CHAIN_ID = 1440000;
+        const RPC_URL = 'https://rpc.xrplevm.org';
+        
+        const FACTORY_ABI = [
+            'function createWallet(address guardian, string agentName, uint256 dailyLimit, uint256 perTxLimit) external returns (address)',
+            'function totalWallets() external view returns (uint256)',
+            'function getWalletsByGuardian(address guardian) external view returns (address[])',
+            'event WalletCreated(address indexed wallet, address indexed guardian, string agentName, uint256 dailyLimit, uint256 perTxLimit, uint256 walletIndex)'
+        ];
+        
+        const REGISTRY_ABI = [
+            'function getEcosystemStats() external view returns (uint256 registered, uint256 verified, uint256 transactions, uint256 volume)',
+            'function getWalletInfo(address wallet) external view returns (tuple(address wallet, address guardian, string agentName, string agentPlatform, uint256 createdAt, uint256 totalTransactions, uint256 totalVolumeXRP, bool verified, bool active))',
+            'function getWallets(uint256 offset, uint256 limit) external view returns (address[])',
+            'function registerWallet(address wallet, string agentName, string agentPlatform) external',
+            'function verifyWallet(address wallet) external'
+        ];
+        
+        const WALLET_ABI = [
+            'function guardian() external view returns (address)',
+            'function agentName() external view returns (string)',
+            'function frozen() external view returns (bool)',
+            'function spendingLimits() external view returns (uint256 perTransaction, uint256 dailyLimit, uint256 monthlyLimit, uint256 dailySpent, uint256 monthlySpent, uint256 dailyResetTime, uint256 monthlyResetTime)',
+            'function sessionCount() external view returns (uint256)',
+            'function getSession(uint256 sessionId) external view returns (tuple(uint256 id, address agent, string agentName, uint256 createdAt, uint256 expiresAt, bool active, uint256 perTxLimit, uint256 dailyLimit, uint256 dailySpent, uint256 dailyResetTime))',
+            'function getActionLogLength() external view returns (uint256)',
+            'function freeze() external',
+            'function unfreeze() external',
+            'function createSession(address agent, string agentName, uint256 duration, uint256 perTxLimit, uint256 dailyLimit) external returns (uint256)'
+        ];
+        
+        let provider, signer, userAddress, factory, registry;
+        
+        async function connectWallet() {
+            if (!window.ethereum) {
+                showToast('Please install MetaMask!', 'error');
+                return;
+            }
+            
+            try {
+                const chainIdHex = '0x' + CHAIN_ID.toString(16);
+                try {
+                    await window.ethereum.request({
+                        method: 'wallet_switchEthereumChain',
+                        params: [{ chainId: chainIdHex }],
+                    });
+                } catch (switchError) {
+                    if (switchError.code === 4902) {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [{
+                                chainId: chainIdHex,
+                                chainName: 'XRPL EVM Sidechain',
+                                nativeCurrency: { name: 'XRP', symbol: 'XRP', decimals: 18 },
+                                rpcUrls: [RPC_URL],
+                                blockExplorerUrls: ['https://explorer.xrplevm.org'],
+                            }],
+                        });
+                    }
+                }
+                
+                provider = new ethers.BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
+                userAddress = await signer.getAddress();
+                
+                factory = new ethers.Contract(FACTORY_ADDRESS, FACTORY_ABI, signer);
+                registry = new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, signer);
+                
+                const btn = document.getElementById('connectBtn');
+                btn.innerHTML = `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`;
+                btn.classList.add('connected');
+                
+                showToast('Wallet connected!', 'success');
+                loadDashboard();
+                
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to connect', 'error');
+            }
+        }
+        
+        async function loadStats() {
+            try {
+                const readProvider = new ethers.JsonRpcProvider(RPC_URL);
+                const readRegistry = new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, readProvider);
+                const readFactory = new ethers.Contract(FACTORY_ADDRESS, FACTORY_ABI, readProvider);
+                
+                const [stats, totalWallets] = await Promise.all([
+                    readRegistry.getEcosystemStats(),
+                    readFactory.totalWallets()
+                ]);
+                
+                document.getElementById('totalWallets').textContent = totalWallets.toString();
+                document.getElementById('totalVolume').textContent = (Number(stats.volume) / 1e18).toFixed(2);
+                document.getElementById('totalTxs').textContent = stats.transactions.toString();
+                document.getElementById('verifiedWallets').textContent = stats.verified.toString();
+                
+            } catch (err) {
+                console.error('Failed to load stats:', err);
+            }
+        }
+        
+        async function loadDashboard() {
+            if (!userAddress) return;
+            
+            const grid = document.getElementById('walletsGrid');
+            grid.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Loading wallets...</p>';
+            
+            try {
+                const wallets = await factory.getWalletsByGuardian(userAddress);
+                
+                if (wallets.length === 0) {
+                    grid.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                            <p style="margin-bottom: 16px;">No wallets yet. Create your first agent wallet!</p>
+                            <button class="btn btn-primary" onclick="showPage('create')">Create Wallet</button>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                grid.innerHTML = '';
+                
+                for (const walletAddr of wallets) {
+                    const wallet = new ethers.Contract(walletAddr, WALLET_ABI, provider);
+                    const [name, isFrozen, limits, balance] = await Promise.all([
+                        wallet.agentName(),
+                        wallet.frozen(),
+                        wallet.spendingLimits(),
+                        provider.getBalance(walletAddr)
+                    ]);
+                    
+                    const dailySpent = Number(limits.dailySpent) / 1e18;
+                    const dailyLimit = Number(limits.dailyLimit) / 1e18;
+                    const dailyPercent = dailyLimit > 0 ? (dailySpent / dailyLimit) * 100 : 0;
+                    
+                    const card = document.createElement('div');
+                    card.className = 'wallet-card';
+                    card.innerHTML = `
+                        <div class="wallet-header">
+                            <span class="wallet-name">${name}</span>
+                            <span class="wallet-badge ${isFrozen ? 'frozen' : 'active'}">${isFrozen ? '❄️ Frozen' : '✓ Active'}</span>
+                        </div>
+                        <div class="wallet-address">${walletAddr}</div>
+                        <div class="wallet-balance">${(Number(balance) / 1e18).toFixed(4)} <span>XRP</span></div>
+                        <div class="limit-item">
+                            <div class="limit-header">
+                                <span class="limit-label">Daily Spending</span>
+                                <span class="limit-value">${dailySpent.toFixed(2)} / ${dailyLimit} XRP</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill ${dailyPercent > 80 ? 'danger' : dailyPercent > 50 ? 'warning' : ''}" style="width: ${Math.min(dailyPercent, 100)}%"></div>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-top: 16px;">
+                            <button class="btn btn-secondary" style="flex: 1;" onclick="viewWallet('${walletAddr}')">View Details</button>
+                            <button class="freeze-btn" onclick="${isFrozen ? 'unfreezeWallet' : 'freezeWallet'}('${walletAddr}')">${isFrozen ? 'Unfreeze' : 'Freeze'}</button>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                }
+                
+            } catch (err) {
+                console.error('Failed to load wallets:', err);
+                grid.innerHTML = '<p style="text-align: center; color: var(--error);">Failed to load wallets</p>';
+            }
+        }
+        
+        async function createWallet() {
+            const name = document.getElementById('agentName').value.trim();
+            const perTx = document.getElementById('perTxLimit').value;
+            const daily = document.getElementById('dailyLimit').value;
+            
+            if (!name) {
+                showToast('Please enter agent name', 'error');
+                return;
+            }
+            
+            if (!userAddress) {
+                showToast('Please connect wallet first', 'error');
+                return;
+            }
+            
+            try {
+                showToast('Creating wallet...', 'success');
+                
+                const tx = await factory.createWallet(
+                    userAddress,
+                    name,
+                    ethers.parseEther(daily.toString()),
+                    ethers.parseEther(perTx.toString())
+                );
+                
+                await tx.wait();
+                
+                showToast('Wallet created! 🎉', 'success');
+                showPage('dashboard');
+                loadDashboard();
+                loadStats();
+                
+            } catch (err) {
+                console.error(err);
+                showToast('Failed: ' + (err.reason || err.message), 'error');
+            }
+        }
+        
+        async function freezeWallet(addr) {
+            try {
+                const wallet = new ethers.Contract(addr, WALLET_ABI, signer);
+                const tx = await wallet.freeze();
+                await tx.wait();
+                showToast('Wallet frozen! ❄️', 'success');
+                loadDashboard();
+            } catch (err) {
+                showToast('Failed: ' + (err.reason || err.message), 'error');
+            }
+        }
+        
+        async function unfreezeWallet(addr) {
+            try {
+                const wallet = new ethers.Contract(addr, WALLET_ABI, signer);
+                const tx = await wallet.unfreeze();
+                await tx.wait();
+                showToast('Wallet unfrozen! ✓', 'success');
+                loadDashboard();
+            } catch (err) {
+                showToast('Failed: ' + (err.reason || err.message), 'error');
+            }
+        }
+        
+        function viewWallet(addr) {
+            window.open(`https://explorer.xrplevm.org/address/${addr}`, '_blank');
+        }
+        
+        function showPage(page) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(page + 'Page').classList.add('active');
+            document.querySelectorAll('.nav-tab').forEach((t, i) => {
+                t.classList.remove('active');
+                if ((page === 'dashboard' && i === 0) ||
+                    (page === 'create' && i === 1) ||
+                    (page === 'registry' && i === 2) ||
+                    (page === 'guide' && i === 3)) {
+                    t.classList.add('active');
+                }
+            });
+            
+            if (page === 'registry') loadRegistry();
+        }
+        
+        async function loadRegistry() {
+            const list = document.getElementById('registryList');
+            try {
+                const readProvider = new ethers.JsonRpcProvider(RPC_URL);
+                const readRegistry = new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, readProvider);
+                
+                const wallets = await readRegistry.getWallets(0, 20);
+                
+                if (wallets.length === 0) {
+                    list.innerHTML = '<p style="text-align: center; color: var(--text-muted);">No wallets registered yet</p>';
+                    return;
+                }
+                
+                let html = '<div class="sessions-list">';
+                for (const addr of wallets) {
+                    const info = await readRegistry.getWalletInfo(addr);
+                    if (info.active) {
+                        html += `
+                            <div class="session-item">
+                                <div class="session-info">
+                                    <div class="session-icon">${info.verified ? '✓' : '?'}</div>
+                                    <div>
+                                        <div class="session-name">${info.agentName}</div>
+                                        <div class="session-agent">${addr.slice(0, 10)}...${addr.slice(-8)} • ${info.agentPlatform}</div>
+                                    </div>
+                                </div>
+                                <div class="session-expiry">
+                                    <div>${info.totalTransactions.toString()} txs</div>
+                                    <div style="font-size: 11px; color: var(--text-muted);">${(Number(info.totalVolumeXRP) / 1e18).toFixed(2)} XRP</div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+                html += '</div>';
+                list.innerHTML = html;
+                
+            } catch (err) {
+                console.error(err);
+                list.innerHTML = '<p style="text-align: center; color: var(--error);">Failed to load registry</p>';
+            }
+        }
+        
+        function showToast(msg, type = 'success') {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastIcon').textContent = type === 'success' ? '✓' : '✗';
+            document.getElementById('toastMsg').textContent = msg;
+            toast.className = 'toast ' + type + ' show';
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+        
+        // Init
+        loadStats();
+        if (window.ethereum?.selectedAddress) connectWallet();
+    </script>
+</body>
+</html>
