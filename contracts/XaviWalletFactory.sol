@@ -13,6 +13,10 @@ import "./XaviWallet.sol";
  */
 contract XaviWalletFactory is Ownable, Pausable {
     
+    // ============ Constants ============
+    
+    string public constant VERSION = "1.1.0";
+    
     // ============ Events ============
     
     event WalletCreated(
@@ -132,5 +136,10 @@ contract XaviWalletFactory is Ownable, Pausable {
     /// @notice Prevent accidental renounce
     function renounceOwnership() public pure override {
         revert("XaviWalletFactory: cannot renounce");
+    }
+    
+    /// @notice Get contract version
+    function getVersion() external pure returns (string memory) {
+        return VERSION;
     }
 }

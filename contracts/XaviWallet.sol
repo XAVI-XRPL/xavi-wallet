@@ -16,99 +16,80 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract XaviWallet is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // ============ Constants ============
+    
+    string public constant VERSION = "1.1.0";
+    uint256 public constant GUARDIAN_TRANSFER_DELAY = 48 hours;
+    uint256 public constant MAX_SESSION_DURATION = 30 days;
+    uint256 public constant MAX_SESSIONS_PER_DAY = 5;
+    uint256 public constant MAX_BATCH_SIZE = 10;
+
     // ============ Structs ============
 
     struct SpendingLimits {
-        uint256 perTransaction;    // max XRP per single tx
-        uint256 dailyLimit;        // max XRP per 24 hours
-        uint256 monthlyLimit;      // max XRP per 30 days (0 = unlimited)
-        uint256 dailySpent;        // tracked spending today
-        uint256 monthlySpent;      // tracked spending this month
-        uint256 dailyResetTime;    // timestamp when daily counter resets
-        uint256 monthlyResetTime;  // timestamp when monthly counter resets
+        uint256 perTransaction;
+        uint256 dailyLimit;
+        uint256 monthlyLimit;
+        uint256 dailySpent;
+        uint256 monthlySpent;
+        uint256 dailyResetTime;
+        uint256 monthlyResetTime;
     }
 
     struct Session {
         uint256 id;
-        address agent;             // agent's EOA (session key holder)
-        string agentName;          // human-readable identifier
+        address agent;
+        string agentName;
         uint256 createdAt;
-        uint256 expiresAt;         // auto-expires, agent loses access
+        uint256 expiresAt;
         bool active;
-        uint256 perTxLimit;        // per-session override (0 = use wallet default)
-        uint256 dailyLimit;        // per-session override (0 = use wallet default)
-        uint256 dailySpent;        // session-specific daily tracking
-        uint256 dailyResetTime;    // session-specific reset time
+        uint256 perTxLimit;
+        uint256 dailyLimit;
+        uint256 dailySpent;
+        uint256 dailyResetTime;
     }
 
     struct ActionLog {
         uint256 id;
-        address agent;             // which agent performed this
-        address target;            // contract called (or recipient)
-        uint256 value;             // XRP sent
-        bytes4 selector;           // function selector called
+        address agent;
+        address target;
+        uint256 value;
+        bytes4 selector;
         uint256 timestamp;
         bool success;
     }
 
     // ============ State Variables ============
 
-    /// @notice Guardian address — has full control
     address public guardian;
-    
-    /// @notice Proposed new guardian for 2-step transfer
     address public proposedGuardian;
-    
-    /// @notice Agent name for this wallet
+    uint256 public guardianTransferProposedAt;
     string public agentName;
-    
-    /// @notice Whether wallet is frozen
     bool public frozen;
-    
-    /// @notice Whether whitelist is enabled (if false, any target allowed)
     bool public whitelistEnabled;
-    
-    /// @notice Global spending limits
     SpendingLimits public spendingLimits;
-    
-    /// @notice Contract whitelist
     mapping(address => bool) public whitelist;
-    
-    /// @notice All whitelisted addresses (for enumeration)
     address[] public whitelistArray;
-    
-    /// @notice Sessions by ID
     mapping(uint256 => Session) public sessions;
-    
-    /// @notice Total sessions created
     uint256 public sessionCount;
-    
-    /// @notice Agent address to active session ID
     mapping(address => uint256) public agentToSession;
-    
-    /// @notice Action log
     ActionLog[] public actionLog;
-    
-    /// @notice Registry contract (optional, for stats)
     address public registry;
+    
+    // Security: Nonce for replay protection
+    mapping(address => uint256) public agentNonces;
+    
+    // Security: Session creation rate limiting
+    uint256 public sessionsCreatedToday;
+    uint256 public sessionCreationResetTime;
 
     // ============ Events ============
 
-    event SessionCreated(
-        uint256 indexed sessionId,
-        address indexed agent,
-        string agentName,
-        uint256 expiresAt
-    );
+    event SessionCreated(uint256 indexed sessionId, address indexed agent, string agentName, uint256 expiresAt);
     event SessionRevoked(uint256 indexed sessionId, address indexed agent);
-    event ActionExecuted(
-        uint256 indexed actionId,
-        address indexed agent,
-        address indexed target,
-        uint256 value,
-        bytes4 selector,
-        bool success
-    );
+    event AllSessionsRevoked(uint256 count);
+    event ActionExecuted(uint256 indexed actionId, address indexed agent, address indexed target, uint256 value, bytes4 selector, bool success);
+    event ActionFailed(address indexed agent, address indexed target, uint256 value, bytes4 selector, string reason);
     event WalletFrozen(address indexed guardian);
     event WalletUnfrozen(address indexed guardian);
     event FundsRecovered(address indexed guardian, uint256 amount);
@@ -158,17 +139,16 @@ contract XaviWallet is ReentrancyGuard {
         spendingLimits = SpendingLimits({
             perTransaction: _perTxLimit,
             dailyLimit: _dailyLimit,
-            monthlyLimit: 0, // unlimited by default
+            monthlyLimit: 0,
             dailySpent: 0,
             monthlySpent: 0,
             dailyResetTime: block.timestamp + 24 hours,
             monthlyResetTime: block.timestamp + 30 days
         });
         
-        whitelistEnabled = false; // disabled by default for ease of setup
+        sessionCreationResetTime = block.timestamp + 24 hours;
+        whitelistEnabled = false;
     }
-
-    // ============ Receive ============
 
     receive() external payable {
         emit Received(msg.sender, msg.value);
@@ -176,55 +156,42 @@ contract XaviWallet is ReentrancyGuard {
 
     // ============ Guardian Functions ============
 
-    /// @notice Freeze the wallet — no agent can transact
     function freeze() external onlyGuardian {
         frozen = true;
         emit WalletFrozen(msg.sender);
     }
 
-    /// @notice Unfreeze the wallet
     function unfreeze() external onlyGuardian {
         frozen = false;
         emit WalletUnfrozen(msg.sender);
     }
 
-    /// @notice Recover all XRP funds to guardian address
     function recoverFunds() external onlyGuardian {
         uint256 balance = address(this).balance;
         require(balance > 0, "XaviWallet: no balance");
-        
         (bool sent, ) = payable(guardian).call{value: balance}("");
         require(sent, "XaviWallet: recovery failed");
-        
         emit FundsRecovered(msg.sender, balance);
     }
 
-    /// @notice Recover specific ERC-20 tokens
     function recoverTokens(address token, uint256 amount) external onlyGuardian {
         require(token != address(0), "XaviWallet: zero token");
         IERC20(token).safeTransfer(guardian, amount);
         emit TokensRecovered(msg.sender, token, amount);
     }
 
-    /// @notice Update spending limits
-    function setSpendingLimits(
-        uint256 perTx,
-        uint256 daily,
-        uint256 monthly
-    ) external onlyGuardian {
+    function setSpendingLimits(uint256 perTx, uint256 daily, uint256 monthly) external onlyGuardian {
         spendingLimits.perTransaction = perTx;
         spendingLimits.dailyLimit = daily;
         spendingLimits.monthlyLimit = monthly;
         emit LimitsUpdated(perTx, daily, monthly);
     }
 
-    /// @notice Enable or disable whitelist
     function setWhitelistEnabled(bool enabled) external onlyGuardian {
         whitelistEnabled = enabled;
         emit WhitelistEnabledChanged(enabled);
     }
 
-    /// @notice Add a contract to the whitelist
     function addToWhitelist(address target) external onlyGuardian {
         require(target != address(0), "XaviWallet: zero address");
         if (!whitelist[target]) {
@@ -234,7 +201,6 @@ contract XaviWallet is ReentrancyGuard {
         }
     }
 
-    /// @notice Remove from whitelist
     function removeFromWhitelist(address target) external onlyGuardian {
         if (whitelist[target]) {
             whitelist[target] = false;
@@ -242,7 +208,6 @@ contract XaviWallet is ReentrancyGuard {
         }
     }
 
-    /// @notice Batch whitelist
     function batchWhitelist(address[] calldata targets) external onlyGuardian {
         for (uint256 i = 0; i < targets.length; i++) {
             if (targets[i] != address(0) && !whitelist[targets[i]]) {
@@ -253,7 +218,6 @@ contract XaviWallet is ReentrancyGuard {
         }
     }
 
-    /// @notice Create a session key for an agent
     function createSession(
         address agent,
         string calldata _agentName,
@@ -263,8 +227,17 @@ contract XaviWallet is ReentrancyGuard {
     ) external onlyGuardian returns (uint256 sessionId) {
         require(agent != address(0), "XaviWallet: zero agent");
         require(duration > 0, "XaviWallet: zero duration");
+        require(duration <= MAX_SESSION_DURATION, "XaviWallet: max 30 days");
         
-        // Revoke any existing session for this agent
+        // Rate limiting: max 5 sessions per 24 hours
+        if (block.timestamp >= sessionCreationResetTime) {
+            sessionsCreatedToday = 0;
+            sessionCreationResetTime = block.timestamp + 24 hours;
+        }
+        require(sessionsCreatedToday < MAX_SESSIONS_PER_DAY, "XaviWallet: session limit reached");
+        sessionsCreatedToday++;
+        
+        // Revoke existing session
         uint256 existingSessionId = agentToSession[agent];
         if (existingSessionId != 0 && sessions[existingSessionId].active) {
             sessions[existingSessionId].active = false;
@@ -288,11 +261,9 @@ contract XaviWallet is ReentrancyGuard {
         });
         
         agentToSession[agent] = sessionId;
-        
         emit SessionCreated(sessionId, agent, _agentName, block.timestamp + duration);
     }
 
-    /// @notice Revoke an active session immediately
     function revokeSession(uint256 sessionId) external onlyGuardian {
         Session storage s = sessions[sessionId];
         require(s.id != 0, "XaviWallet: invalid session");
@@ -300,28 +271,44 @@ contract XaviWallet is ReentrancyGuard {
         
         s.active = false;
         agentToSession[s.agent] = 0;
-        
         emit SessionRevoked(sessionId, s.agent);
     }
 
-    /// @notice Transfer guardianship (2-step: propose + accept)
+    /// @notice Emergency: revoke ALL active sessions
+    function revokeAllSessions() external onlyGuardian {
+        uint256 revokedCount = 0;
+        for (uint256 i = 1; i <= sessionCount; i++) {
+            if (sessions[i].active) {
+                sessions[i].active = false;
+                agentToSession[sessions[i].agent] = 0;
+                revokedCount++;
+            }
+        }
+        emit AllSessionsRevoked(revokedCount);
+    }
+
+    /// @notice 2-step guardian transfer with 48-hour delay
     function proposeNewGuardian(address newGuardian) external onlyGuardian {
         require(newGuardian != address(0), "XaviWallet: zero guardian");
         require(newGuardian != guardian, "XaviWallet: same guardian");
         proposedGuardian = newGuardian;
+        guardianTransferProposedAt = block.timestamp;
         emit GuardianshipProposed(guardian, newGuardian);
     }
 
-    /// @notice Accept guardianship (called by proposed guardian)
     function acceptGuardianship() external {
         require(msg.sender == proposedGuardian, "XaviWallet: not proposed");
+        require(
+            block.timestamp >= guardianTransferProposedAt + GUARDIAN_TRANSFER_DELAY,
+            "XaviWallet: 48hr delay not met"
+        );
         address previous = guardian;
         guardian = proposedGuardian;
         proposedGuardian = address(0);
+        guardianTransferProposedAt = 0;
         emit GuardianshipTransferred(previous, guardian);
     }
 
-    /// @notice Set registry contract for stats
     function setRegistry(address _registry) external onlyGuardian {
         registry = _registry;
         emit RegistrySet(_registry);
@@ -329,12 +316,23 @@ contract XaviWallet is ReentrancyGuard {
 
     // ============ Agent Functions ============
 
-    /// @notice Execute a transaction through the wallet
+    /// @notice Execute a transaction with nonce for replay protection
     function execute(
         address target,
         uint256 value,
-        bytes calldata data
+        bytes calldata data,
+        uint256 nonce
     ) external onlyActiveSession whenNotFrozen nonReentrant returns (bool success, bytes memory result) {
+        // Nonce check for replay protection
+        require(nonce == agentNonces[msg.sender], "XaviWallet: invalid nonce");
+        agentNonces[msg.sender]++;
+        
+        // Input validation
+        require(target != address(0), "XaviWallet: zero target");
+        require(target != address(this), "XaviWallet: cannot call self");
+        require(target != guardian, "XaviWallet: cannot call guardian");
+        require(data.length > 0 || value > 0, "XaviWallet: empty call");
+        
         _checkWhitelist(target);
         _checkLimits(value, msg.sender);
         
@@ -344,28 +342,41 @@ contract XaviWallet is ReentrancyGuard {
         
         _logAction(msg.sender, target, value, selector, success);
         
-        // Update registry if set
+        if (!success) {
+            emit ActionFailed(msg.sender, target, value, selector, "execution reverted");
+        }
+        
         if (registry != address(0)) {
             try IXaviWalletRegistry(registry).recordAction(value) {} catch {}
         }
     }
 
-    /// @notice Execute multiple transactions atomically
+    /// @notice Execute multiple transactions atomically with batch size limit
     function executeBatch(
         address[] calldata targets,
         uint256[] calldata values,
-        bytes[] calldata datas
+        bytes[] calldata datas,
+        uint256 nonce
     ) external onlyActiveSession whenNotFrozen nonReentrant returns (bool[] memory successes) {
-        require(
-            targets.length == values.length && values.length == datas.length,
-            "XaviWallet: length mismatch"
-        );
+        require(nonce == agentNonces[msg.sender], "XaviWallet: invalid nonce");
+        agentNonces[msg.sender]++;
+        
+        require(targets.length == values.length && values.length == datas.length, "XaviWallet: length mismatch");
+        require(targets.length <= MAX_BATCH_SIZE, "XaviWallet: batch too large");
+        require(targets.length > 0, "XaviWallet: empty batch");
         
         successes = new bool[](targets.length);
         uint256 totalValue = 0;
         
+        // Validate all targets first
         for (uint256 i = 0; i < targets.length; i++) {
+            require(targets[i] != address(0), "XaviWallet: zero target");
+            require(targets[i] != address(this), "XaviWallet: cannot call self");
+            require(targets[i] != guardian, "XaviWallet: cannot call guardian");
             _checkWhitelist(targets[i]);
+            
+            // Overflow check
+            require(totalValue + values[i] >= totalValue, "XaviWallet: overflow");
             totalValue += values[i];
         }
         
@@ -373,14 +384,15 @@ contract XaviWallet is ReentrancyGuard {
         
         for (uint256 i = 0; i < targets.length; i++) {
             bytes4 selector = datas[i].length >= 4 ? bytes4(datas[i][:4]) : bytes4(0);
-            
             (bool success, ) = targets[i].call{value: values[i]}(datas[i]);
             successes[i] = success;
-            
             _logAction(msg.sender, targets[i], values[i], selector, success);
+            
+            if (!success) {
+                emit ActionFailed(msg.sender, targets[i], values[i], selector, "batch item failed");
+            }
         }
         
-        // Update registry if set
         if (registry != address(0)) {
             try IXaviWalletRegistry(registry).recordAction(totalValue) {} catch {}
         }
@@ -388,80 +400,62 @@ contract XaviWallet is ReentrancyGuard {
 
     // ============ View Functions ============
 
-    /// @notice Check remaining daily budget
     function remainingDailyBudget() external view returns (uint256) {
         SpendingLimits memory limits = spendingLimits;
-        
-        // Check if reset needed
-        if (block.timestamp >= limits.dailyResetTime) {
-            return limits.dailyLimit;
-        }
-        
-        if (limits.dailySpent >= limits.dailyLimit) {
-            return 0;
-        }
-        
+        if (block.timestamp >= limits.dailyResetTime) return limits.dailyLimit;
+        if (limits.dailySpent >= limits.dailyLimit) return 0;
         return limits.dailyLimit - limits.dailySpent;
     }
 
-    /// @notice Check if a target is whitelisted
     function isWhitelisted(address target) external view returns (bool) {
         if (!whitelistEnabled) return true;
         return whitelist[target];
     }
 
-    /// @notice Get session info
     function getSession(uint256 sessionId) external view returns (Session memory) {
         return sessions[sessionId];
     }
 
-    /// @notice Get session by agent address
     function getSessionByAgent(address agent) external view returns (Session memory) {
-        uint256 sessionId = agentToSession[agent];
-        return sessions[sessionId];
+        return sessions[agentToSession[agent]];
     }
 
-    /// @notice Get action log length
     function getActionLogLength() external view returns (uint256) {
         return actionLog.length;
     }
 
-    /// @notice Get action log slice
     function getActionLog(uint256 startId, uint256 count) external view returns (ActionLog[] memory) {
         uint256 len = actionLog.length;
-        if (startId >= len) {
-            return new ActionLog[](0);
-        }
-        
-        uint256 end = startId + count;
-        if (end > len) {
-            end = len;
-        }
-        
+        if (startId >= len) return new ActionLog[](0);
+        uint256 end = startId + count > len ? len : startId + count;
         ActionLog[] memory logs = new ActionLog[](end - startId);
         for (uint256 i = startId; i < end; i++) {
             logs[i - startId] = actionLog[i];
         }
-        
         return logs;
     }
 
-    /// @notice Get all whitelisted addresses
     function getWhitelist() external view returns (address[] memory) {
         return whitelistArray;
     }
 
-    /// @notice Get wallet balance
     function getBalance() external view returns (uint256) {
         return address(this).balance;
     }
 
-    /// @notice Check if session is valid
     function isSessionValid(address agent) external view returns (bool) {
         uint256 sessionId = agentToSession[agent];
         if (sessionId == 0) return false;
         Session storage s = sessions[sessionId];
         return s.active && block.timestamp < s.expiresAt;
+    }
+
+    function getAgentNonce(address agent) external view returns (uint256) {
+        return agentNonces[agent];
+    }
+
+    function getVersion() external pure returns (string memory) {
+        return VERSION;
     }
 
     // ============ Internal Functions ============
@@ -477,38 +471,28 @@ contract XaviWallet is ReentrancyGuard {
             spendingLimits.monthlyResetTime = block.timestamp + 30 days;
         }
         
-        // Get session for per-session limits
         Session storage s = sessions[agentToSession[agent]];
         
-        // Reset session daily counter if needed
         if (block.timestamp >= s.dailyResetTime) {
             s.dailySpent = 0;
             s.dailyResetTime = block.timestamp + 24 hours;
         }
         
-        // Check per-transaction limit
         uint256 perTxLimit = s.perTxLimit > 0 ? s.perTxLimit : spendingLimits.perTransaction;
         require(value <= perTxLimit, "XaviWallet: exceeds per-tx limit");
         
-        // Check session daily limit
         uint256 sessionDailyLimit = s.dailyLimit > 0 ? s.dailyLimit : spendingLimits.dailyLimit;
         require(s.dailySpent + value <= sessionDailyLimit, "XaviWallet: exceeds session daily limit");
         
-        // Check global daily limit
-        require(
-            spendingLimits.dailySpent + value <= spendingLimits.dailyLimit,
-            "XaviWallet: exceeds daily limit"
-        );
+        // Overflow check
+        require(spendingLimits.dailySpent + value >= spendingLimits.dailySpent, "XaviWallet: overflow");
+        require(spendingLimits.dailySpent + value <= spendingLimits.dailyLimit, "XaviWallet: exceeds daily limit");
         
-        // Check global monthly limit (if set)
         if (spendingLimits.monthlyLimit > 0) {
-            require(
-                spendingLimits.monthlySpent + value <= spendingLimits.monthlyLimit,
-                "XaviWallet: exceeds monthly limit"
-            );
+            require(spendingLimits.monthlySpent + value >= spendingLimits.monthlySpent, "XaviWallet: overflow");
+            require(spendingLimits.monthlySpent + value <= spendingLimits.monthlyLimit, "XaviWallet: exceeds monthly limit");
         }
         
-        // Update counters
         s.dailySpent += value;
         spendingLimits.dailySpent += value;
         spendingLimits.monthlySpent += value;
@@ -520,15 +504,8 @@ contract XaviWallet is ReentrancyGuard {
         }
     }
 
-    function _logAction(
-        address agent,
-        address target,
-        uint256 value,
-        bytes4 selector,
-        bool success
-    ) internal {
+    function _logAction(address agent, address target, uint256 value, bytes4 selector, bool success) internal {
         uint256 actionId = actionLog.length;
-        
         actionLog.push(ActionLog({
             id: actionId,
             agent: agent,
@@ -538,7 +515,6 @@ contract XaviWallet is ReentrancyGuard {
             timestamp: block.timestamp,
             success: success
         }));
-        
         emit ActionExecuted(actionId, agent, target, value, selector, success);
     }
 }

@@ -12,6 +12,11 @@ import "./XaviWallet.sol";
  */
 contract XaviWalletRegistry is Ownable {
     
+    // ============ Constants ============
+    
+    string public constant VERSION = "1.1.0";
+    uint256 public constant MIN_WALLET_BALANCE = 1 ether; // 1 XRP minimum to register
+    
     // ============ Structs ============
     
     struct WalletInfo {
@@ -89,6 +94,9 @@ contract XaviWalletRegistry is Ownable {
         // Verify caller is the guardian
         XaviWallet w = XaviWallet(payable(wallet));
         require(w.guardian() == msg.sender, "XaviWalletRegistry: not guardian");
+        
+        // Spam prevention: minimum wallet balance
+        require(wallet.balance >= MIN_WALLET_BALANCE, "XaviWalletRegistry: min 1 XRP balance");
         
         walletInfo[wallet] = WalletInfo({
             wallet: wallet,
@@ -228,5 +236,10 @@ contract XaviWalletRegistry is Ownable {
     /// @notice Prevent accidental renounce
     function renounceOwnership() public pure override {
         revert("XaviWalletRegistry: cannot renounce");
+    }
+    
+    /// @notice Get contract version
+    function getVersion() external pure returns (string memory) {
+        return VERSION;
     }
 }
